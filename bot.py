@@ -11,7 +11,6 @@ intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
 
 # Parse Guild ID from Environment
 RAW_GUILD_IDS = os.getenv("ALLOWED_GUILD_IDS", "")
@@ -25,11 +24,15 @@ except ValueError:
     print("[BOT] ⚠️ Warning: Failed to parse ALLOWED_GUILD_IDS.")
 
 # ---------------------------------------------------------
-# Slash Commands Setup
+# Slash Commands
 # ---------------------------------------------------------
-@tree.command(name="ping", description="Check the bot's latency")
+@bot.tree.command(name="ping", description="Check the bot's latency")
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message(f"Pong! 🏓 `{round(bot.latency * 1000)}ms`")
+
+@bot.tree.command(name="token", description="Get active tokens from pool")
+async def token(interaction: discord.Interaction):
+    await interaction.response.send_message("Token request received! Check your direct messages.", ephemeral=True)
 
 # ---------------------------------------------------------
 # Event Handlers
@@ -39,25 +42,20 @@ async def on_ready():
     print("[BOT] Starting unified bot...")
     print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})")
     
-    # Sync commands to target guild(s)
     if ALLOWED_GUILD_IDS:
         for guild_id in ALLOWED_GUILD_IDS:
             guild_obj = discord.Object(id=guild_id)
-            
-            # Copy all registered global commands to this specific guild tree
-            tree.copy_global_to(guild=guild_obj)
-            
+            bot.tree.copy_global_to(guild=guild_obj)
             try:
-                synced = await tree.sync(guild=guild_obj)
+                synced = await bot.tree.sync(guild=guild_obj)
                 print(f"[BOT] ✅ Successfully synced {len(synced)} command(s) to Guild ID: {guild_id}")
-            except discord.HTTPException as e:
+            except Exception as e:
                 print(f"[BOT] ❌ Failed to sync commands to Guild {guild_id}: {e}")
     else:
-        # Fallback to global sync if no guild ID is provided
         try:
-            synced = await tree.sync()
+            synced = await bot.tree.sync()
             print(f"[BOT] ✅ Successfully synced {len(synced)} global command(s).")
-        except discord.HTTPException as e:
+        except Exception as e:
             print(f"[BOT] ❌ Failed to sync global commands: {e}")
 
 # ---------------------------------------------------------
