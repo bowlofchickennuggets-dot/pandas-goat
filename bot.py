@@ -1,69 +1,233 @@
-import os
-import discord
-from discord import app_commands
-from discord.ext import commands
+const { 
+    Client, 
+    GatewayIntentBits, 
+    REST, 
+    Routes, 
+    SlashCommandBuilder, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle,
+    Events
+} = require('discord.js');
+const express = require('express');
+const fs = require('fs');
 
-# ---------------------------------------------------------
-# Intent Setup & Bot Initialization
-# ---------------------------------------------------------
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
+// Prevent unexpected process crashes
+process.on('unhandledRejection', (reason) => console.error('⚠️ [CRASH PREVENTED] Unhandled Rejection:', reason));
+process.on('uncaughtException', (err) => console.error('⚠️ [CRASH PREVENTED] Uncaught Exception:', err));
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+// ==================== CONFIGURATION ====================
+const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID || '1540776513119719591';
+const SERVER_KEY = process.env.SERVER_KEY || '5839ecdfd43bc7467f77cba4a40ea64c8ee5f986f61cf16a0e024ed2225891a4'; 
+const REFRESH_API_URL = 'https://nulls.tools/api/refresh';
 
-# Parse Guild ID from Environment
-RAW_GUILD_IDS = os.getenv("ALLOWED_GUILD_IDS", "")
-print(f"[BOT] 🔎 Raw ALLOWED_GUILD_IDS env: '{RAW_GUILD_IDS}'")
+// Primary Master Refresh Token
+let MASTER_REFRESH_TOKEN = process.env.MASTER_REFRESH_TOKEN || "";
 
-try:
-    ALLOWED_GUILD_IDS = [int(gid.strip()) for gid in RAW_GUILD_IDS.split(",") if gid.strip()]
-    print(f"[BOT] 🔎 Parsed ALLOWED_GUILD_IDS: {ALLOWED_GUILD_IDS}")
-except ValueError:
-    ALLOWED_GUILD_IDS = []
-    print("[BOT] ⚠️ Warning: Failed to parse ALLOWED_GUILD_IDS.")
+let botSettings = {
+    logsChannelId: process.env.LOGS_CHANNEL_ID || "",
+    defaultCooldownSeconds: 0 
+};
 
-# ---------------------------------------------------------
-# Slash Commands
-# ---------------------------------------------------------
-@bot.tree.command(name="ping", description="Check the bot's latency")
-async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message(f"Pong! 🏓 `{round(bot.latency * 1000)}ms`")
-
-@bot.tree.command(name="token", description="Get active tokens from pool")
-async def token(interaction: discord.Interaction):
-    await interaction.response.send_message("Token request received! Check your direct messages.", ephemeral=True)
-
-# ---------------------------------------------------------
-# Event Handlers
-# ---------------------------------------------------------
-@bot.event
-async def on_ready():
-    print("[BOT] Starting unified bot...")
-    print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})")
+// --- DATABASE TOKEN ROTATION LOADER ---
+function getStoredTokens() {
+    let tokenList = [];
     
-    if ALLOWED_GUILD_IDS:
-        for guild_id in ALLOWED_GUILD_IDS:
-            guild_obj = discord.Object(id=guild_id)
-            bot.tree.copy_global_to(guild=guild_obj)
-            try:
-                synced = await bot.tree.sync(guild=guild_obj)
-                print(f"[BOT] ✅ Successfully synced {len(synced)} command(s) to Guild ID: {guild_id}")
-            except Exception as e:
-                print(f"[BOT] ❌ Failed to sync commands to Guild {guild_id}: {e}")
-    else:
-        try:
-            synced = await bot.tree.sync()
-            print(f"[BOT] ✅ Successfully synced {len(synced)} global command(s).")
-        except Exception as e:
-            print(f"[BOT] ❌ Failed to sync global commands: {e}")
+    // Add environment token first if available
+    if (MASTER_REFRESH_TOKEN && MASTER_REFRESH_TOKEN.trim().length > 0) {
+        tokenList.push(MASTER_REFRESH_TOKEN.trim());
+    }
 
-# ---------------------------------------------------------
-# Run Bot
-# ---------------------------------------------------------
-if __name__ == "__main__":
-    BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-    if not BOT_TOKEN:
-        raise ValueError("DISCORD_BOT_TOKEN environment variable is missing.")
+    // Load extra fallback tokens from database.json if available
+    if (fs.existsSync('./database.json')) {
+        try {
+            const dbRaw = fs.readFileSync('./database.json', 'utf8');
+            const dbData = JSON.parse(dbRaw);
+            if (Array.isArray(dbData.tokens)) {
+                dbData.tokens.forEach(item => {
+                    try {
+                        const parsed = typeof item === 'string' ? JSON.parse(item) : item;
+                        if (parsed.refresh_token) {
+                            tokenList.push(parsed.refresh_token.trim());
+                        }
+                    } catch (e) {
+                        if (typeof item === 'string' && item.includes('eyJ')) {
+                            tokenList.push(item.trim());
+                        }
+                    }
+                });
+            }
+        } catch (e) {
+            console.error('⚠️ Could not parse database.json tokens:', e.message);
+        }
+    }
+
+    // Remove duplicates
+    return [...new Set(tokenList)];
+}
+
+// ==================== DISCORD CLIENT SETUP ====================
+const client = new Client({ 
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMembers
+    ] 
+});
+
+// --- LOGGING HELPER ---
+async function sendLog(embed) {
+    if (!botSettings.logsChannelId) return;
+    try {
+        const channel = await client.channels.fetch(botSettings.logsChannelId);
+        if (channel && channel.isTextBased()) {
+            await channel.send({ embeds: [embed] });
+        }
+    } catch (e) {
+        console.error('❌ Failed to send log:', e.message);
+    }
+}
+
+// --- LIVE TOKEN GENERATOR ---
+async function fetchLiveTokenPair() {
+    console.log('⚡ Requesting live token exchange from Nulls API...');
     
-    bot.run(BOT_TOKEN)
+    const tokenCandidates = getStoredTokens();
+    if (tokenCandidates.length === 0) {
+        console.error('❌ No refresh tokens found in environment or database.json.');
+        return null;
+    }
+
+    // Attempt token exchange across candidates
+    for (const activeToken of tokenCandidates) {
+        try {
+            // Attempt standard field names
+            const response = await fetch(REFRESH_API_URL, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'SteamVR 1.88.1.3421_a3df6ce5'
+                },
+                body: JSON.stringify({
+                    server_key: SERVER_KEY,
+                    refresh_token: activeToken
+                })
+            });
+
+            if (!response.ok) {
+                const errBody = await response.text();
+                console.error(`❌ Nulls API Status ${response.status} | Details: ${errBody}`);
+                continue; // Try next candidate
+            }
+
+            const data = await response.json();
+            const freshBearer = data.token || data.bearer || data.access_token || data.jwt;
+
+            if (freshBearer) {
+                return {
+                    bearer: freshBearer,
+                    refresh_token: data.refresh_token || data.refreshToken || data.refresh || activeToken
+                };
+            }
+        } catch (error) {
+            console.error('❌ Network error generating live token:', error.message);
+        }
+    }
+
+    return null;
+}
+
+// --- SLASH COMMANDS REGISTRATION ---
+const commands = [
+    new SlashCommandBuilder().setName('generator').setDescription('Spawns the live token generator interface.')
+].map(c => c.toJSON());
+
+if (TOKEN) {
+    const rest = new REST({ version: '10' }).setToken(TOKEN);
+    rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands })
+        .then(() => console.log('✅ Slash commands registered successfully.'))
+        .catch(console.error);
+}
+
+// --- BOT EVENTS ---
+client.once(Events.ClientReady, (readyClient) => {
+    console.log(`🚀 ONLINE: Logged in as ${readyClient.user.tag}`);
+});
+
+client.on(Events.InteractionCreate, async interaction => {
+    // Command handler: /generator
+    if (interaction.isChatInputCommand() && interaction.commandName === 'generator') {
+        const embed = new EmbedBuilder()
+            .setTitle('⚙️ Private Token Generator')
+            .setDescription('Click the button below to mint a fresh 1-hour Bearer token!')
+            .setColor('#5865F2');
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('claim_token')
+                .setLabel('Generate Live Token')
+                .setStyle(ButtonStyle.Success)
+        );
+
+        await interaction.reply({ embeds: [embed], components: [row] });
+        return;
+    }
+
+    // Button handler: claim_token
+    if (interaction.isButton() && interaction.customId === 'claim_token') {
+        await interaction.deferReply({ flags: 64 });
+
+        const tokenPair = await fetchLiveTokenPair();
+
+        if (!tokenPair) {
+            return interaction.editReply({ 
+                content: '❌ Generation failed. Check server logs for API error details.' 
+            });
+        }
+
+        const dmPayload = JSON.stringify({
+            _note: "Fresh live token pair generated successfully",
+            bearer: tokenPair.bearer,
+            refresh_token: tokenPair.refresh_token
+        }, null, 2);
+
+        try {
+            await interaction.user.send(`🎁 **Your Live Tokens:**\n\`\`\`json\n${dmPayload}\n\`\`\``);
+            await interaction.editReply({ content: '📦 Check your Direct Messages for your fresh token!' });
+
+            const logEmbed = new EmbedBuilder()
+                .setTitle('📜 Token Generated')
+                .addFields(
+                    { name: 'User', value: `${interaction.user.tag} (\`${interaction.user.id}\`)`, inline: true }
+                )
+                .setTimestamp()
+                .setColor('#57F287');
+            await sendLog(logEmbed);
+
+        } catch (e) {
+            await interaction.editReply({ content: '❌ Direct Messages are closed. Please open your DMs and try again.' });
+        }
+    }
+});
+
+// ==================== WEB SERVER FOR RAILWAY ====================
+const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+app.get('/', (req, res) => {
+    res.send(`<h2>⚙️ Private Token Bot Online</h2>`);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🌐 Web server active on port ${PORT}`);
+});
+
+if (TOKEN) {
+    client.login(TOKEN);
+} else {
+    console.error('❌ DISCORD_TOKEN is missing from environment variables!');
+}
