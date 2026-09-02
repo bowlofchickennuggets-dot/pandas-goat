@@ -2,15 +2,24 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
+# Install Node.js
+RUN apt-get update && \
+    apt-get install -y curl ca-certificates && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy all bot files
+# JavaScript dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy project
 COPY . .
 
-# Create data directory (persistent volume should mount here in Railway)
 RUN mkdir -p /app/data
 
-# Entry point
 CMD ["python", "main.py"]
