@@ -162,17 +162,17 @@ def main():
     parser.add_argument("--loop", action="store_true")
     args = parser.parse_args()
 
-print("[REFRESH] Process started", flush=True)
-print(
-    "[REFRESH] TOKEN_1 present:",
-    bool(os.getenv("TOKEN_1")),
-    flush=True
-)
-print(
-    "[REFRESH] REFRESH_TOKEN_1 present:",
-    bool(os.getenv("REFRESH_TOKEN_1")),
-    flush=True
-)
+    print("[REFRESH] Process started", flush=True)
+    print(
+        "[REFRESH] TOKEN_1 present:",
+        bool(os.getenv("TOKEN_1")),
+        flush=True
+    )
+    print(
+        "[REFRESH] REFRESH_TOKEN_1 present:",
+        bool(os.getenv("REFRESH_TOKEN_1")),
+        flush=True
+    )
 
     accounts = load_accounts()
 
@@ -198,7 +198,6 @@ print(
             print(f"[REFRESH] ❌ Single refresh failed: {e}")
             traceback.print_exc()
         return
-
     # ── Loop ──────────────────────────────────────────────────────────────────
     print(f"[REFRESH] 🔁 Loop active — every {REFRESH_INTERVAL}s\n")
     fails = 0
