@@ -59,7 +59,7 @@ if __name__ == "__main__":
     threads = [
         threading.Thread(
             target=run_forever,
-            args=("Bot", [sys.executable, "bot.py"]),
+            args=("Bot", ["node", "discord.js"]),
             daemon=False,
             name="Bot",
         ),
