@@ -228,7 +228,7 @@ if (interaction.isButton() && interaction.customId === 'claim_token') {
     }
 
     const dmPayload = JSON.stringify({
-        _note: "Fresh live token pair generated successfully",
+        _note: "made by 4",
         bearer: tokenPair.bearer,
         refresh_token: tokenPair.refresh_token
     }, null, 2);
