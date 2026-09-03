@@ -20,6 +20,7 @@ process.on('uncaughtException', (err) => console.error('⚠️ [CRASH PREVENTED]
 // ==================== CONFIGURATION ====================
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID || '1540776513119719591';
+const SUPPORTER_ROLE_ID = process.env.SUPPORTER_ROLE_ID;
 const SERVER_KEY = process.env.SERVER_KEY || '5839ecdfd43bc7467f77cba4a40ea64c8ee5f986f61cf16a0e024ed2225891a4'; 
 const REFRESH_API_URL = 'https://nulls.tools/api/refresh';
 
@@ -159,9 +160,18 @@ client.once(Events.ClientReady, (readyClient) => {
 client.on(Events.InteractionCreate, async interaction => {
     // Command handler: /generator
     if (interaction.isChatInputCommand() && interaction.commandName === 'generator') {
+
+    if (!interaction.member.roles.cache.has(SUPPORTER_ROLE_ID)) {
+        return interaction.reply({
+            content: '❌ You need the Supporter role to use this command.',
+            ephemeral: true
+        });
+    }
+
+    const embed = new EmbedBuilder()
         const embed = new EmbedBuilder()
-            .setTitle('⚙️ Private Token Generator')
-            .setDescription('Click the button below to mint a fresh 1-hour Bearer token!')
+            .setTitle('⚙️ 4's Token Generator')
+            .setDescription('Click the button below to generate a token!')
             .setColor('#5865F2');
 
         const row = new ActionRowBuilder().addComponents(
