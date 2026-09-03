@@ -168,7 +168,7 @@ client.on(Events.InteractionCreate, async interaction => {
         });
     }
 
-    const embed = new EmbedBuilder()
+
         const embed = new EmbedBuilder()
             .setTitle('⚙️ 4's Token Generator')
             .setDescription('Click the button below to generate a token!')
