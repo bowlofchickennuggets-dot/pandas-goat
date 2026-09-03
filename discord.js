@@ -34,7 +34,6 @@ let botSettings = {
     defaultCooldownSeconds: 600
 };
 
-const userCooldowns = new Map();
 
 // Cooldowns are in seconds
 // Replace the ROLE IDs below with your actual Discord role IDs.
