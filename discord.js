@@ -27,12 +27,21 @@ const REFRESH_API_URL = 'https://nulls.tools/api/refresh';
 // Primary Master Refresh Token
 let MASTER_REFRESH_TOKEN = process.env.MASTER_REFRESH_TOKEN || "";
 
+const userCooldowns = new Map();
+
 let botSettings = {
     logsChannelId: process.env.LOGS_CHANNEL_ID || "",
     defaultCooldownSeconds: 600
 };
 
 const userCooldowns = new Map();
+
+// Cooldowns are in seconds
+// Replace the ROLE IDs below with your actual Discord role IDs.
+const roleCooldowns = {
+    "PREMIUM_ROLE_ID": 10,   // 10 seconds
+    "BOOSTER_ROLE_ID": 220     // 3 minutes 30 seconds
+};
 
 // --- DATABASE TOKEN ROTATION LOADER ---
 function getStoredTokens() {
@@ -191,9 +200,94 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
     }
 
-    // Button handler: claim_token
+
 // Button handler: claim_token
+
 if (interaction.isButton() && interaction.customId === 'claim_token') {
+
+    const userId = interaction.user.id;
+    const now = Date.now();
+
+    // Start with the normal 10-minute cooldown
+    let cooldownSeconds = botSettings.defaultCooldownSeconds;
+
+    // Check the user's roles for a shorter cooldown
+    if (interaction.member && interaction.member.roles) {
+        for (const [roleId, roleCooldown] of Object.entries(roleCooldowns)) {
+            if (interaction.member.roles.cache.has(roleId)) {
+                cooldownSeconds = Math.min(cooldownSeconds, roleCooldown);
+            }
+        }
+    }
+
+    // Check existing cooldown
+    const lastUsed = userCooldowns.get(userId);
+
+    if (lastUsed) {
+        const elapsed = (now - lastUsed) / 1000;
+        const remaining = cooldownSeconds - elapsed;
+
+        if (remaining > 0) {
+            const minutes = Math.floor(remaining / 60);
+            const seconds = Math.ceil(remaining % 60);
+
+            return interaction.reply({
+                content: `⏳ You are on cooldown. Please wait **${minutes}m ${seconds}s** before generating another token.`,
+                ephemeral: true
+            });
+        }
+    }
+
+    await interaction.deferReply({ flags: 64 });
+
+    const tokenPair = await fetchLiveTokenPair();
+
+    if (!tokenPair) {
+        return interaction.editReply({
+            content: '❌ Generation failed. Check server logs for API error details.'
+        });
+    }
+
+    const dmPayload = JSON.stringify({
+        _note: "Fresh live token pair generated successfully",
+        bearer: tokenPair.bearer,
+        refresh_token: tokenPair.refresh_token
+    }, null, 2);
+
+    try {
+        await interaction.user.send(
+            `**Your Live Tokens:**\n\`\`\`json\n${dmPayload}\n\`\`\``
+        );
+
+        // Start cooldown after successful generation
+        userCooldowns.set(userId, Date.now());
+
+        const cooldownMinutes = Math.ceil(cooldownSeconds / 60);
+
+        await interaction.editReply({
+            content: `📦 Check your Direct Messages for your fresh token!\n⏳ Your next token will be available in **${cooldownMinutes} minute${cooldownMinutes === 1 ? '' : 's'}**.`
+        });
+
+        const logEmbed = new EmbedBuilder()
+            .setTitle('📜 Token Generated')
+            .addFields(
+                {
+                    name: 'User',
+                    value: `${interaction.user.tag} (\`${interaction.user.id}\`)`,
+                    inline: true
+                }
+            )
+            .setTimestamp()
+            .setColor('#57F287');
+
+        await sendLog(logEmbed);
+
+    } catch (e) {
+        await interaction.editReply({
+            content: '❌ Direct Messages are closed. Please open your DMs and try again.'
+        });
+    }
+}
 
     const userId = interaction.user.id;
     const cooldownSeconds = botSettings.defaultCooldownSeconds;
