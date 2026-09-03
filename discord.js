@@ -19,9 +19,9 @@ process.on('uncaughtException', (err) => console.error('⚠️ [CRASH PREVENTED]
 
 // ==================== CONFIGURATION ====================
 const TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID || '1540776513119719591';
-const SUPPORTER_ROLE_ID = process.env.SUPPORTER_ROLE_ID;
-const SERVER_KEY = process.env.SERVER_KEY || '5839ecdfd43bc7467f77cba4a40ea64c8ee5f986f61cf16a0e024ed2225891a4'; 
+const CLIENT_ID = process.env.CLIENT_ID;
+const SERVER_ID = '1540776513119719591';
+const SUPPORTER_ROLE_ID = process.env.SUPPORTER_ROLE_ID;const SERVER_KEY = process.env.SERVER_KEY || '5839ecdfd43bc7467f77cba4a40ea64c8ee5f986f61cf16a0e024ed2225891a4'; 
 const REFRESH_API_URL = 'https://nulls.tools/api/refresh';
 
 // Primary Master Refresh Token
@@ -147,8 +147,12 @@ const commands = [
 
 if (TOKEN) {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
-    rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands })
-        .then(() => console.log('✅ Slash commands registered successfully.'))
+
+    rest.put(
+        Routes.applicationGuildCommands(CLIENT_ID, SERVER_ID),
+        { body: commands }
+    )
+        .then(() => console.log('✅ Server slash commands registered successfully.'))
         .catch(console.error);
 }
 
@@ -186,8 +190,16 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     // Button handler: claim_token
-    if (interaction.isButton() && interaction.customId === 'claim_token') {
-        await interaction.deferReply({ flags: 64 });
+if (interaction.isButton() && interaction.customId === 'claim_token') {
+
+    if (!interaction.member.roles.cache.has(SUPPORTER_ROLE_ID)) {
+        return interaction.reply({
+            content: '❌ You need the Supporter role to generate tokens.',
+            ephemeral: true
+        });
+    }
+
+    await interaction.deferReply({ flags: 64 });
 
         const tokenPair = await fetchLiveTokenPair();
 
