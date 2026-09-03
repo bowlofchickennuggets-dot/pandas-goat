@@ -210,7 +210,7 @@ if (freshBearer) {
         refresh_token: newRefreshToken
     };
 }
-            }
+            
         } catch (error) {
             console.error('❌ Network error generating live token:', error.message);
         }
