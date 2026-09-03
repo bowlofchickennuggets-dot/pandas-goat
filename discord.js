@@ -249,7 +249,7 @@ if (interaction.isButton() && interaction.customId === 'claim_token') {
     }
 
     const dmPayload = JSON.stringify({
-        _note: "Fresh live token pair generated successfully",
+        _note: "thanks for using 4's token gen",
         bearer: tokenPair.bearer,
         refresh_token: tokenPair.refresh_token
     }, null, 2);
@@ -265,7 +265,7 @@ if (interaction.isButton() && interaction.customId === 'claim_token') {
         const cooldownMinutes = Math.ceil(cooldownSeconds / 60);
 
         await interaction.editReply({
-            content: `📦 Check your Direct Messages for your fresh token!\n⏳ Your next token will be available in **${cooldownMinutes} minute${cooldownMinutes === 1 ? '' : 's'}**.`
+            content: `📦 Check your Direct Messages for your token!\n⏳ Your next token will be available in **${cooldownMinutes} minute${cooldownMinutes === 1 ? '' : 's'}**.`
         });
 
         const logEmbed = new EmbedBuilder()
