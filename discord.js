@@ -29,8 +29,10 @@ let MASTER_REFRESH_TOKEN = process.env.MASTER_REFRESH_TOKEN || "";
 
 let botSettings = {
     logsChannelId: process.env.LOGS_CHANNEL_ID || "",
-    defaultCooldownSeconds: 0 
+    defaultCooldownSeconds: 600
 };
+
+const userCooldowns = new Map();
 
 // --- DATABASE TOKEN ROTATION LOADER ---
 function getStoredTokens() {
@@ -190,48 +192,79 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 
     // Button handler: claim_token
+// Button handler: claim_token
 if (interaction.isButton() && interaction.customId === 'claim_token') {
 
-    if (!interaction.member.roles.cache.has(SUPPORTER_ROLE_ID)) {
-        return interaction.reply({
-            content: '❌ You need the Supporter role to generate tokens.',
-            ephemeral: true
-        });
+    const userId = interaction.user.id;
+    const cooldownSeconds = botSettings.defaultCooldownSeconds;
+    const now = Date.now();
+
+    // Check if user is currently on cooldown
+    const lastUsed = userCooldowns.get(userId);
+
+    if (lastUsed) {
+        const elapsed = (now - lastUsed) / 1000;
+        const remaining = cooldownSeconds - elapsed;
+
+        if (remaining > 0) {
+            const minutes = Math.floor(remaining / 60);
+            const seconds = Math.ceil(remaining % 60);
+
+            return interaction.reply({
+                content: `⏳ You are on cooldown. Please wait **${minutes}m ${seconds}s** before generating another token.`,
+                ephemeral: true
+            });
+        }
     }
 
     await interaction.deferReply({ flags: 64 });
 
-        const tokenPair = await fetchLiveTokenPair();
+    const tokenPair = await fetchLiveTokenPair();
 
-        if (!tokenPair) {
-            return interaction.editReply({ 
-                content: '❌ Generation failed. Check server logs for API error details.' 
-            });
-        }
-
-        const dmPayload = JSON.stringify({
-            _note: "made by 4 and mestro_ac",
-            bearer: tokenPair.bearer,
-            refresh_token: tokenPair.refresh_token
-        }, null, 2);
-
-        try {
-            await interaction.user.send(` **Your Live Tokens:**\n\`\`\`json\n${dmPayload}\n\`\`\``);
-            await interaction.editReply({ content: '📦 Check your Direct Messages for your fresh token!' });
-
-            const logEmbed = new EmbedBuilder()
-                .setTitle('📜 Token Generated')
-                .addFields(
-                    { name: 'User', value: `${interaction.user.tag} (\`${interaction.user.id}\`)`, inline: true }
-                )
-                .setTimestamp()
-                .setColor('#57F287');
-            await sendLog(logEmbed);
-
-        } catch (e) {
-            await interaction.editReply({ content: '❌ Direct Messages are closed. Please open your DMs and try again.' });
-        }
+    if (!tokenPair) {
+        return interaction.editReply({
+            content: '❌ Generation failed. Check server logs for API error details.'
+        });
     }
+
+    const dmPayload = JSON.stringify({
+        _note: "Fresh live token pair generated successfully",
+        bearer: tokenPair.bearer,
+        refresh_token: tokenPair.refresh_token
+    }, null, 2);
+
+    try {
+        await interaction.user.send(
+            `**Your Live Tokens:**\n\`\`\`json\n${dmPayload}\n\`\`\``
+        );
+
+        // Start the 10-minute cooldown after successful generation
+        userCooldowns.set(userId, Date.now());
+
+        await interaction.editReply({
+            content: '📦 Check your Direct Messages for your fresh token!\n⏳ You can generate another token in **10 minutes**.'
+        });
+
+        const logEmbed = new EmbedBuilder()
+            .setTitle('📜 Token Generated')
+            .addFields(
+                {
+                    name: 'User',
+                    value: `${interaction.user.tag} (\`${interaction.user.id}\`)`,
+                    inline: true
+                }
+            )
+            .setTimestamp()
+            .setColor('#57F287');
+
+        await sendLog(logEmbed);
+
+    } catch (e) {
+        await interaction.editReply({
+            content: '❌ Direct Messages are closed. Please open your DMs and try again.'
+        });
+    }
+}
 });
 
 // ==================== WEB SERVER FOR RAILWAY ====================
