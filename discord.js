@@ -27,6 +27,40 @@ const REFRESH_API_URL = 'https://nulls.tools/api/refresh';
 // Primary Master Refresh Token
 let MASTER_REFRESH_TOKEN = process.env.MASTER_REFRESH_TOKEN || "";
 
+function saveRefreshToken(newRefreshToken) {
+    if (!newRefreshToken || !newRefreshToken.trim()) {
+        return;
+    }
+
+    MASTER_REFRESH_TOKEN = newRefreshToken.trim();
+
+    try {
+        let dbData = {};
+
+        if (fs.existsSync('./database.json')) {
+            dbData = JSON.parse(fs.readFileSync('./database.json', 'utf8'));
+        }
+
+        if (!Array.isArray(dbData.tokens)) {
+            dbData.tokens = [];
+        }
+
+        // Replace the first stored token with the newest one
+        dbData.tokens[0] = {
+            refresh_token: MASTER_REFRESH_TOKEN
+        };
+
+        fs.writeFileSync(
+            './database.json',
+            JSON.stringify(dbData, null, 2)
+        );
+
+        console.log('✅ Saved newest refresh token.');
+    } catch (error) {
+        console.error('❌ Failed to save refresh token:', error.message);
+    }
+}
+
 const userCooldowns = new Map();
 
 let botSettings = {
@@ -134,14 +168,48 @@ async function fetchLiveTokenPair() {
                 continue; // Try next candidate
             }
 
-            const data = await response.json();
-            const freshBearer = data.token || data.bearer || data.access_token || data.jwt;
+const data = await response.json();
 
-            if (freshBearer) {
-                return {
-                    bearer: freshBearer,
-                    refresh_token: data.refresh_token || data.refreshToken || data.refresh || activeToken
-                };
+console.log('🔎 Nulls API response fields:', Object.keys(data));
+
+const hasNewRefreshToken = Boolean(
+    data.refresh_token ||
+    data.refreshToken ||
+    data.refresh
+);
+
+const hasNewBearer = Boolean(
+    data.token ||
+    data.bearer ||
+    data.access_token ||
+    data.jwt
+);
+
+console.log('🔎 New bearer returned:', hasNewBearer);
+console.log('🔎 New refresh token returned:', hasNewRefreshToken);
+
+const freshBearer =
+    data.token ||
+    data.bearer ||
+    data.access_token ||
+    data.jwt;
+
+if (freshBearer) {
+    const newRefreshToken =
+        data.refresh_token ||
+        data.refreshToken ||
+        data.refresh ||
+        activeToken;
+
+    if (newRefreshToken !== activeToken) {
+        saveRefreshToken(newRefreshToken);
+    }
+
+    return {
+        bearer: freshBearer,
+        refresh_token: newRefreshToken
+    };
+}
             }
         } catch (error) {
             console.error('❌ Network error generating live token:', error.message);
@@ -244,7 +312,7 @@ if (interaction.isButton() && interaction.customId === 'claim_token') {
 
     if (!tokenPair) {
         return interaction.editReply({
-            content: '❌ Generation failed. Check server logs for API error details.'
+            content: '❌ Generation failed. Current Tokens have expired and will be restocked soon.'
         });
     }
 
@@ -256,7 +324,7 @@ if (interaction.isButton() && interaction.customId === 'claim_token') {
 
     try {
         await interaction.user.send(
-            `**Your Live Tokens:**\n\`\`\`json\n${dmPayload}\n\`\`\``
+            `**Your Token :**\n\`\`\`json\n${dmPayload}\n\`\`\``
         );
 
         // Start cooldown after successful generation
