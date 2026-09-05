@@ -72,7 +72,7 @@ let botSettings = {
 // Cooldowns are in seconds
 // Replace the ROLE IDs below with your actual Discord role IDs.
 const roleCooldowns = {
-    "1544790700690767902": 10,   // 10 seconds
+    "1544790700690767902": 3,   // 3 seconds
     "1544791353366679682": 210,     // 3 minutes 30 seconds
     "1544791985204756511": 30   // 30 seconds
 };
