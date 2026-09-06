@@ -24,6 +24,7 @@ const SERVER_ID = '1540776513119719591';
 const SUPPORTER_ROLE_IDS = [
     "1539068588210651156",
     "1544791353366679682",
+    "1545535562763468990"
 ];const SERVER_KEY = process.env.SERVER_KEY || '5839ecdfd43bc7467f77cba4a40ea64c8ee5f986f61cf16a0e024ed2225891a4'; 
 const REFRESH_API_URL = 'https://nulls.tools/api/refresh';
 
