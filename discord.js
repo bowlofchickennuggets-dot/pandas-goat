@@ -234,14 +234,15 @@ const commands = [
 if (TOKEN) {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
 
-    rest.put(
-        Routes.applicationGuildCommands(CLIENT_ID, SERVER_IDS),
-        { body: commands }
-    )
-        .then(() => console.log('✅ Server slash commands registered successfully.'))
+    for (const serverId of SERVER_IDS) {
+        rest.put(
+            Routes.applicationGuildCommands(CLIENT_ID, serverId),
+            { body: commands }
+        )
+        .then(() => console.log(`✅ Slash commands registered in ${serverId}`))
         .catch(console.error);
+    }
 }
-
 // --- BOT EVENTS ---
 client.once(Events.ClientReady, (readyClient) => {
     console.log(`🚀 ONLINE: Logged in as ${readyClient.user.tag}`);
@@ -251,8 +252,9 @@ client.on(Events.InteractionCreate, async interaction => {
     // Command handler: /generator
     if (interaction.isChatInputCommand() && interaction.commandName === 'generator') {
 
-    if (!interaction.member.roles.cache.has(SUPPORTER_ROLE_ID)) {
-        return interaction.reply({
+    if (!interaction.member.roles.cache.some(role =>
+        SUPPORTER_ROLE_IDS.includes(role.id)
+    )) {
             content: '❌ You need the Supporter role to use this command.',
             ephemeral: true
         });
