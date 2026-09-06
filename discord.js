@@ -235,7 +235,7 @@ if (TOKEN) {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
 
     rest.put(
-        Routes.applicationGuildCommands(CLIENT_ID, SERVER_ID),
+        Routes.applicationGuildCommands(CLIENT_ID, SERVER_IDS),
         { body: commands }
     )
         .then(() => console.log('✅ Server slash commands registered successfully.'))
