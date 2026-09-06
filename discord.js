@@ -244,22 +244,19 @@ if (TOKEN) {
     }
 }
 // --- BOT EVENTS ---
-client.once(Events.ClientReady, (readyClient) => {
-    console.log(`🚀 ONLINE: Logged in as ${readyClient.user.tag}`);
-});
-
 client.on(Events.InteractionCreate, async interaction => {
+
     // Command handler: /generator
     if (interaction.isChatInputCommand() && interaction.commandName === 'generator') {
 
-    if (!interaction.member.roles.cache.some(role =>
-        SUPPORTER_ROLE_IDS.includes(role.id)
-    )) {
-            content: '❌ You need the Supporter role to use this command.',
-            ephemeral: true
-        });
-    }
-
+        if (!interaction.member.roles.cache.some(role =>
+            SUPPORTER_ROLE_IDS.includes(role.id)
+        )) {
+            return interaction.reply({
+                content: '❌ You need the Supporter role to use this command.',
+                ephemeral: true
+            });
+        }
 
         const embed = new EmbedBuilder()
             .setTitle('⚙️ 4\'s Token Generator')
@@ -273,101 +270,96 @@ client.on(Events.InteractionCreate, async interaction => {
                 .setStyle(ButtonStyle.Success)
         );
 
-        await interaction.reply({ embeds: [embed], components: [row] });
+        await interaction.reply({
+            embeds: [embed],
+            components: [row]
+        });
+
         return;
     }
 
 
-// Button handler: claim_token
+    // Button handler: claim_token
+    if (interaction.isButton() && interaction.customId === 'claim_token') {
 
-if (interaction.isButton() && interaction.customId === 'claim_token') {
+        const userId = interaction.user.id;
+        const now = Date.now();
 
-    const userId = interaction.user.id;
-    const now = Date.now();
+        let cooldownSeconds = botSettings.defaultCooldownSeconds;
 
-    // Start with the normal 10-minute cooldown
-    let cooldownSeconds = botSettings.defaultCooldownSeconds;
-
-    // Check the user's roles for a shorter cooldown
-    if (interaction.member && interaction.member.roles) {
-        for (const [roleId, roleCooldown] of Object.entries(roleCooldowns)) {
-            if (interaction.member.roles.cache.has(roleId)) {
-                cooldownSeconds = Math.min(cooldownSeconds, roleCooldown);
+        if (interaction.member && interaction.member.roles) {
+            for (const [roleId, roleCooldown] of Object.entries(roleCooldowns)) {
+                if (interaction.member.roles.cache.has(roleId)) {
+                    cooldownSeconds = Math.min(cooldownSeconds, roleCooldown);
+                }
             }
         }
-    }
 
-    // Check existing cooldown
-    const lastUsed = userCooldowns.get(userId);
+        const lastUsed = userCooldowns.get(userId);
 
-    if (lastUsed) {
-        const elapsed = (now - lastUsed) / 1000;
-        const remaining = cooldownSeconds - elapsed;
+        if (lastUsed) {
+            const elapsed = (now - lastUsed) / 1000;
+            const remaining = cooldownSeconds - elapsed;
 
-        if (remaining > 0) {
-            const minutes = Math.floor(remaining / 60);
-            const seconds = Math.ceil(remaining % 60);
+            if (remaining > 0) {
+                const minutes = Math.floor(remaining / 60);
+                const seconds = Math.ceil(remaining % 60);
 
-            return interaction.reply({
-                content: `⏳ You are on cooldown. Please wait **${minutes}m ${seconds}s** before generating another token.`,
-                ephemeral: true
+                return interaction.reply({
+                    content: `⏳ You are on cooldown. Please wait **${minutes}m ${seconds}s** before generating another token.`,
+                    ephemeral: true
+                });
+            }
+        }
+
+        await interaction.deferReply({ flags: 64 });
+
+        const tokenPair = await fetchLiveTokenPair();
+
+        if (!tokenPair) {
+            return interaction.editReply({
+                content: '❌ Generation failed. Current Tokens have expired and will be restocked soon.'
             });
         }
-    }
 
-    await interaction.deferReply({ flags: 64 });
+        const dmPayload = JSON.stringify({
+            _note: "thanks for using 4's token gen",
+            bearer: tokenPair.bearer,
+            refresh_token: tokenPair.refresh_token
+        }, null, 2);
 
-    const tokenPair = await fetchLiveTokenPair();
+        try {
+            await interaction.user.send(
+                `**Your Token :**\n\`\`\`json\n${dmPayload}\n\`\`\``
+            );
 
-    if (!tokenPair) {
-        return interaction.editReply({
-            content: '❌ Generation failed. Current Tokens have expired and will be restocked soon.'
-        });
-    }
+            userCooldowns.set(userId, Date.now());
 
-    const dmPayload = JSON.stringify({
-        _note: "thanks for using 4's token gen",
-        bearer: tokenPair.bearer,
-        refresh_token: tokenPair.refresh_token
-    }, null, 2);
+            const cooldownMinutes = Math.ceil(cooldownSeconds / 60);
 
-    try {
-        await interaction.user.send(
-            `**Your Token :**\n\`\`\`json\n${dmPayload}\n\`\`\``
-        );
+            await interaction.editReply({
+                content: `📦 Check your Direct Messages for your token!\n⏳ Your next token will be available in **${cooldownMinutes} minute${cooldownMinutes === 1 ? '' : 's'}**.`
+            });
 
-        // Start cooldown after successful generation
-        userCooldowns.set(userId, Date.now());
-
-        const cooldownMinutes = Math.ceil(cooldownSeconds / 60);
-
-        await interaction.editReply({
-            content: `📦 Check your Direct Messages for your token!\n⏳ Your next token will be available in **${cooldownMinutes} minute${cooldownMinutes === 1 ? '' : 's'}**.`
-        });
-
-        const logEmbed = new EmbedBuilder()
-            .setTitle('📜 Token Generated')
-            .addFields(
-                {
+            const logEmbed = new EmbedBuilder()
+                .setTitle('📜 Token Generated')
+                .addFields({
                     name: 'User',
                     value: `${interaction.user.tag} (\`${interaction.user.id}\`)`,
                     inline: true
-                }
-            )
-            .setTimestamp()
-            .setColor('#57F287');
+                })
+                .setTimestamp()
+                .setColor('#57F287');
 
-        await sendLog(logEmbed);
+            await sendLog(logEmbed);
 
-    } catch (e) {
-        await interaction.editReply({
-            content: '❌ Direct Messages are closed. Please open your DMs and try again.'
-        });
+        } catch (e) {
+            await interaction.editReply({
+                content: '❌ Direct Messages are closed. Please open your DMs and try again.'
+            });
+        }
     }
-}
-
-    });
-
+});
 // ==================== WEB SERVER FOR RAILWAY ====================
 const app = express();
 app.use(express.json());
