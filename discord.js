@@ -21,7 +21,10 @@ process.on('uncaughtException', (err) => console.error('⚠️ [CRASH PREVENTED]
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const SERVER_ID = '1540776513119719591';
-const SUPPORTER_ROLE_ID = process.env.SUPPORTER_ROLE_ID;const SERVER_KEY = process.env.SERVER_KEY || '5839ecdfd43bc7467f77cba4a40ea64c8ee5f986f61cf16a0e024ed2225891a4'; 
+const SUPPORTER_ROLE_IDS = [
+    "1539068588210651156",
+    "1544791353366679682",
+];const SERVER_KEY = process.env.SERVER_KEY || '5839ecdfd43bc7467f77cba4a40ea64c8ee5f986f61cf16a0e024ed2225891a4'; 
 const REFRESH_API_URL = 'https://nulls.tools/api/refresh';
 
 // Primary Master Refresh Token
