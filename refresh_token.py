@@ -24,6 +24,7 @@ import os
 import time
 import argparse
 from urllib import request, error
+import ssl
 import traceback
 
 from storage import (
@@ -39,6 +40,9 @@ HOST        = os.getenv("NAKAMA_HOST", "https://animalcompany.us-east1.nakamaclo
 SERVER_KEY  = os.getenv("NAKAMA_SERVER_KEY", "6URuTSlDKKfYbuDW")
 REFRESH_URL = f"{HOST}/v2/account/session/refresh"
 REFRESH_INTERVAL = int(os.getenv("REFRESH_INTERVAL_SECONDS", "120"))
+
+if not SERVER_KEY:
+    print("[REFRESH] ❌ NAKAMA_SERVER_KEY is missing from environment variables.")
 
 
 # ── Load accounts from env (TOKEN_1/REFRESH_TOKEN_1, TOKEN_2/..., etc.) ──────
@@ -109,6 +113,8 @@ def load_tokens(accounts: list[dict]) -> dict:
 
 # ── Refresh call ──────────────────────────────────────────────────────────────
 def do_refresh(tokens: dict) -> dict:
+    if not SERVER_KEY:
+        raise RuntimeError("NAKAMA_SERVER_KEY is not configured.")
     print(f"\n[REFRESH] 🔄 Refreshing token...")
 
     basic = base64.b64encode(f"{SERVER_KEY}:".encode()).decode()
@@ -124,7 +130,8 @@ def do_refresh(tokens: dict) -> dict:
         },
     )
 
-    with request.urlopen(req, timeout=15) as resp:
+    ssl_context = ssl.create_default_context()
+    with request.urlopen(req, timeout=15, context=ssl_context) as resp:
         data = json.loads(resp.read())
 
     tokens["token"]         = data.get("token",         tokens["token"])
@@ -205,15 +212,16 @@ def main():
 
     while True:
         try:
-            if is_expired(tokens["token"], buffer=300):
-                print("[REFRESH] ⚠️ Token expiring soon — refreshing now...")
-            else:
-                ttl = seconds_until_expiry(tokens["token"])
-                print(f"[REFRESH] ⏱️ Token valid for {ttl}s — sleeping {REFRESH_INTERVAL}s...")
-                time.sleep(REFRESH_INTERVAL)
+            ttl = seconds_until_expiry(tokens["token"])
 
-            tokens = do_refresh(tokens)
-            fails  = 0
+            if ttl <= 300:
+                print(f"[REFRESH] ⚠️ Token expires in {ttl}s — refreshing now...")
+                tokens = do_refresh(tokens)
+                fails = 0
+            else:
+                sleep_for = min(REFRESH_INTERVAL, max(15, ttl - 300))
+                print(f"[REFRESH] ⏱️ Token valid for {ttl}s — checking again in {sleep_for}s...")
+                time.sleep(sleep_for)
 
         except KeyboardInterrupt:
             print("\n[REFRESH] ⛔ Stopped by user")
