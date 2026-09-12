@@ -32,6 +32,8 @@ process.on('uncaughtException', (err) =>
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
+const NAKAMA_HOST = 'https://animalcompany.us-east1.nakamacloud.io';
+
 const SERVER_IDS = [
     '1540776513119719591'
 ];
