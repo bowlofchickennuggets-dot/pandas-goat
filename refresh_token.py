@@ -38,7 +38,7 @@ from storage import (
 
 # ── Config ────────────────────────────────────────────────────────────────────
 HOST        = os.getenv("NAKAMA_HOST", "https://animalcompany.us-east1.nakamacloud.io")
-SERVER_KEY  = os.getenv("NAKAMA_SERVER_KEY", "6URuTSlDKKfYbuDW")
+SERVER_KEY  = os.getenv("NAKAMA_SERVER_KEY", "")
 REFRESH_URL = f"{HOST}/v2/account/session/refresh"
 REFRESH_INTERVAL = int(os.getenv("REFRESH_INTERVAL_SECONDS", "120"))
 
