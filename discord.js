@@ -45,9 +45,9 @@ const SUPPORTER_ROLE_IDS = [
 // Railway variable first.
 // If Railway somehow fails to provide it, the hard-coded fallback is used.
 const SERVER_KEY =
-    process.env.SERVER_KEY || 'PUT_YOUR_EXISTING_SERVER_KEY_HERE';
+    process.env.SERVER_KEY || '6URuTSlDKKfYbuDW';
 
-const REFRESH_API_URL = 'https://nulls.tools/api/refresh';
+
 
 // Initial/bootstrap refresh token.
 // The current rotated token will be stored in database.json.
@@ -119,24 +119,14 @@ const roleCooldowns = {
 
 // ==================== TOKEN DATABASE ====================
 
+// --- DATABASE TOKEN ROTATION LOADER ---
 function getStoredTokens() {
     const tokenList = [];
 
-    const dbPath = path.join(
-        BASE_DIR,
-        'database.json'
-    );
-
-    // IMPORTANT:
-    // database.json is checked FIRST because it contains
-    // the newest rotated refresh token.
-    if (fs.existsSync(dbPath)) {
+    // Prefer the newest token saved by the Nakama refresher.
+    if (fs.existsSync('./database.json')) {
         try {
-            const dbRaw = fs.readFileSync(
-                dbPath,
-                'utf8'
-            );
-
+            const dbRaw = fs.readFileSync('./database.json', 'utf8');
             const dbData = JSON.parse(dbRaw);
 
             if (Array.isArray(dbData.tokens)) {
@@ -149,41 +139,35 @@ function getStoredTokens() {
 
                         if (
                             parsed &&
-                            parsed.refresh_token
+                            typeof parsed.refresh_token === 'string' &&
+                            parsed.refresh_token.trim().length > 0
                         ) {
-                            tokenList.push(
-                                String(
-                                    parsed.refresh_token
-                                ).trim()
-                            );
+                            tokenList.push(parsed.refresh_token.trim());
                         }
-                    } catch (_) {
-                        // Ignore malformed entries
+                    } catch {
+                        // Ignore malformed database entries
                     }
                 }
             }
-        } catch (e) {
+        } catch (error) {
             console.error(
                 '⚠️ Could not parse database.json tokens:',
-                e.message
+                error.message
             );
         }
     }
 
-    // Railway token is only used as a bootstrap/fallback.
+    // Railway MASTER_REFRESH_TOKEN is only a fallback.
     if (
         MASTER_REFRESH_TOKEN &&
         MASTER_REFRESH_TOKEN.trim().length > 0
     ) {
-        tokenList.push(
-            MASTER_REFRESH_TOKEN.trim()
-        );
+        tokenList.push(MASTER_REFRESH_TOKEN.trim());
     }
 
-    // Remove duplicates
+    // Remove duplicates while preserving order.
     return [...new Set(tokenList)];
 }
-
 
 // ==================== DISCORD CLIENT ====================
 
@@ -226,152 +210,130 @@ async function sendLog(embed) {
 }
 
 
-// ==================== LIVE TOKEN GENERATOR ====================
-
+// --- NAKAMA TOKEN REFRESH ---
 async function fetchLiveTokenPair() {
+    console.log('⚡ Requesting fresh token directly from Nakama...');
 
-    console.log(
-        '⚡ Requesting live token exchange from Nulls API...'
-    );
-
-    const tokenCandidates =
-        getStoredTokens();
+    const tokenCandidates = getStoredTokens();
 
     if (tokenCandidates.length === 0) {
-        console.error(
-            '❌ No refresh tokens found in environment or database.json.'
-        );
-
+        console.error('❌ No refresh tokens found in environment or database.json.');
         return null;
     }
 
-    // Try every available refresh token
-    for (const activeToken of tokenCandidates) {
+    if (!SERVER_KEY) {
+        console.error('❌ Nakama SERVER_KEY is missing.');
+        return null;
+    }
 
+    const refreshUrl = `${NAKAMA_HOST}/v2/account/session/refresh`;
+
+    // Nakama uses HTTP Basic authentication:
+    // username = server key
+    // password = empty
+    const basicAuth = Buffer
+        .from(`${SERVER_KEY}:`)
+        .toString('base64');
+
+    for (const refreshToken of tokenCandidates) {
         try {
+            const response = await fetch(refreshUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Basic ${basicAuth}`
+                },
+                body: JSON.stringify({
+                    token: refreshToken
+                })
+            });
 
-            const response = await fetch(
-                REFRESH_API_URL,
-                {
-                    method: 'POST',
-
-                    headers: {
-                        'Content-Type':
-                            'application/json',
-
-                        'User-Agent':
-                            'SteamVR 1.88.1.3421_a3df6ce5'
-                    },
-
-                    body: JSON.stringify({
-                        server_key:
-                            SERVER_KEY,
-
-                        refresh_token:
-                            activeToken
-                    })
-                }
-            );
-
+            const responseText = await response.text();
 
             if (!response.ok) {
-
-                const errBody =
-                    await response.text();
-
                 console.error(
-                    `❌ Nulls API Status ${response.status} | Details: ${errBody}`
+                    `❌ Nakama refresh failed: ${response.status} | ${responseText}`
                 );
-
                 continue;
             }
 
+            let data;
 
-            const data =
-                await response.json();
-
-
-            console.log(
-                '🔎 Nulls API response fields:',
-                Object.keys(data)
-            );
-
-
-            const hasNewRefreshToken =
-                Boolean(
-                    data.refresh_token ||
-                    data.refreshToken ||
-                    data.refresh
-                );
-
-
-            const hasNewBearer =
-                Boolean(
-                    data.token ||
-                    data.bearer ||
-                    data.access_token ||
-                    data.jwt
-                );
-
-
-            console.log(
-                '🔎 New bearer returned:',
-                hasNewBearer
-            );
-
-            console.log(
-                '🔎 New refresh token returned:',
-                hasNewRefreshToken
-            );
-
+            try {
+                data = JSON.parse(responseText);
+            } catch {
+                console.error('❌ Nakama returned invalid JSON.');
+                continue;
+            }
 
             const freshBearer =
                 data.token ||
-                data.bearer ||
-                data.access_token ||
-                data.jwt;
+                data.access_token;
 
+            const freshRefreshToken =
+                data.refresh_token ||
+                data.refreshToken ||
+                refreshToken;
 
-            if (freshBearer) {
-
-                const newRefreshToken =
-                    data.refresh_token ||
-                    data.refreshToken ||
-                    data.refresh ||
-                    activeToken;
-
-
-                // VERY IMPORTANT:
-                // Save the newly rotated refresh token.
-                if (
-                    newRefreshToken !==
-                    activeToken
-                ) {
-                    saveRefreshToken(
-                        newRefreshToken
-                    );
-                }
-
-
-                return {
-                    bearer:
-                        freshBearer,
-
-                    refresh_token:
-                        newRefreshToken
-                };
+            if (!freshBearer) {
+                console.error('❌ Nakama response did not contain a new access token.');
+                continue;
             }
 
-        } catch (error) {
+            console.log('✅ Nakama token refresh successful.');
 
+            // Update the in-memory master refresh token
+            MASTER_REFRESH_TOKEN = freshRefreshToken;
+
+            // Save the rotated refresh token to database.json
+            try {
+                let dbData = {};
+
+                if (fs.existsSync('./database.json')) {
+                    try {
+                        dbData = JSON.parse(
+                            fs.readFileSync('./database.json', 'utf8')
+                        );
+                    } catch {
+                        dbData = {};
+                    }
+                }
+
+                if (!Array.isArray(dbData.tokens)) {
+                    dbData.tokens = [];
+                }
+
+                dbData.tokens[0] = {
+                    refresh_token: freshRefreshToken
+                };
+
+                fs.writeFileSync(
+                    './database.json',
+                    JSON.stringify(dbData, null, 2)
+                );
+
+                console.log('💾 Saved newest Nakama refresh token.');
+            } catch (saveError) {
+                console.error(
+                    '⚠️ Could not save refreshed token:',
+                    saveError.message
+                );
+            }
+
+            return {
+                bearer: freshBearer,
+                refresh_token: freshRefreshToken
+            };
+
+        } catch (error) {
             console.error(
-                '❌ Network error generating live token:',
+                '❌ Network error refreshing Nakama token:',
                 error.message
             );
         }
     }
 
-
+    console.error('❌ All Nakama refresh attempts failed.');
     return null;
 }
 
