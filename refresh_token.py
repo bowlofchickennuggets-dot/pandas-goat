@@ -26,6 +26,7 @@ import argparse
 from urllib import request, error
 import ssl
 import traceback
+from pathlib import Path
 
 from storage import (
     get_public_token_raw,
@@ -44,6 +45,39 @@ REFRESH_INTERVAL = int(os.getenv("REFRESH_INTERVAL_SECONDS", "120"))
 if not SERVER_KEY:
     print("[REFRESH] ❌ NAKAMA_SERVER_KEY is missing from environment variables.")
 
+
+# ── Shared refresh-token storage ───────────────────────────────────────────────
+BASE_DIR = Path(__file__).resolve().parent
+SHARED_DB = BASE_DIR / "database.json"
+
+def load_shared_refresh_token():
+    try:
+        if SHARED_DB.exists():
+            data = json.loads(SHARED_DB.read_text(encoding="utf-8"))
+            tokens = data.get("tokens", [])
+            if tokens and isinstance(tokens[0], dict):
+                return str(tokens[0].get("refresh_token", "")).strip()
+    except Exception as e:
+        print(f"[REFRESH] ⚠️ Could not read shared database.json: {e}")
+    return ""
+
+def save_shared_refresh_token(refresh_token):
+    if not refresh_token:
+        return
+    try:
+        data = {}
+        if SHARED_DB.exists():
+            try: data = json.loads(SHARED_DB.read_text(encoding="utf-8"))
+            except Exception: data = {}
+        if not isinstance(data.get("tokens"), list): data["tokens"] = []
+        if data["tokens"] and isinstance(data["tokens"][0], dict):
+            data["tokens"][0]["refresh_token"] = refresh_token
+        else:
+            data["tokens"].insert(0, {"refresh_token": refresh_token})
+        SHARED_DB.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        print("[REFRESH] 💾 Saved newest refresh token to shared database.json")
+    except Exception as e:
+        print(f"[REFRESH] ❌ Failed to save shared refresh token: {e}")
 
 # ── Load accounts from env (TOKEN_1/REFRESH_TOKEN_1, TOKEN_2/..., etc.) ──────
 def load_accounts() -> list[dict]:
@@ -95,6 +129,13 @@ def load_tokens(accounts: list[dict]) -> dict:
     Priority: existing storage → first valid account → error.
     """
     data = get_public_token_raw()
+    shared_refresh = load_shared_refresh_token()
+    if shared_refresh and data.get("token") and not is_expired(data["token"]):
+        data["refresh_token"] = shared_refresh
+        set_public_token_raw(data)
+        print("[REFRESH] ✅ Using shared refresh token from database.json")
+        return data
+
     if data.get("token") and data.get("refresh_token") and not is_expired(data["token"]):
         print("[REFRESH] ✅ Tokens loaded from storage")
         return data
@@ -138,6 +179,7 @@ def do_refresh(tokens: dict) -> dict:
     tokens["refresh_token"] = data.get("refresh_token", tokens["refresh_token"])
 
     set_public_token_raw(tokens)
+    save_shared_refresh_token(tokens["refresh_token"])
 
     ttl      = seconds_until_expiry(tokens["token"])
     exp_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(decode_jwt_exp(tokens["token"])))
@@ -243,6 +285,7 @@ def main():
                 if next_acc:
                     tokens = next_acc
                     set_public_token_raw({"token": tokens["token"], "refresh_token": tokens["refresh_token"]})
+                    save_shared_refresh_token(tokens["refresh_token"])
                     fails = 0
                     continue
                 else:
@@ -256,6 +299,7 @@ def main():
                 if next_acc:
                     tokens = next_acc
                     set_public_token_raw({"token": tokens["token"], "refresh_token": tokens["refresh_token"]})
+                    save_shared_refresh_token(tokens["refresh_token"])
                     fails = 0
                     continue
                 print("[REFRESH] ❌ All accounts exhausted — stopping.")
@@ -274,6 +318,7 @@ def main():
                 if next_acc:
                     tokens = next_acc
                     set_public_token_raw({"token": tokens["token"], "refresh_token": tokens["refresh_token"]})
+                    save_shared_refresh_token(tokens["refresh_token"])
                     fails = 0
                     continue
                 print("[REFRESH] ❌ All accounts exhausted — stopping.")
