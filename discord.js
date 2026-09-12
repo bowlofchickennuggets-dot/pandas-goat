@@ -33,8 +33,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
 const SERVER_IDS = [
-    '1540776513119719591',
-    '1545535562763468990'
+    '1540776513119719591'
 ];
 
 const SUPPORTER_ROLE_IDS = [
