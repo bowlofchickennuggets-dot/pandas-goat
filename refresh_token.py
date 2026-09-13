@@ -125,33 +125,84 @@ def get_active_account(accounts: list[dict]) -> dict | None:
 
 def load_tokens(accounts: list[dict]) -> dict:
     """
-    Pick the active token to use as the public token.
-    Priority: existing storage → first valid account → error.
+    Load the token pair.
+
+    Priority:
+    1. data/tokens.json refresh token
+    2. database.json shared refresh token
+    3. TOKEN_1 / REFRESH_TOKEN_1 environment variables
+
+    A stored refresh token can be used even if the access token has
+    already expired, because the whole point of this script is to
+    refresh the access token.
     """
+
     data = get_public_token_raw()
+
+    # ---------------------------------------------------------
+    # 1. Use the refresh token from data/tokens.json
+    # ---------------------------------------------------------
+    stored_refresh = str(data.get("refresh_token", "")).strip()
+
+    if stored_refresh:
+        print("[REFRESH] ✅ Found refresh token in data/tokens.json")
+
+        stored_token = str(data.get("token", "")).strip()
+
+        if stored_token:
+            print("[REFRESH] 📦 Existing access token also found in storage.")
+        else:
+            print("[REFRESH] 📦 No existing access token — refresh will create one.")
+
+        return {
+            "token": stored_token,
+            "refresh_token": stored_refresh
+        }
+
+    # ---------------------------------------------------------
+    # 2. Use refresh token from shared database.json
+    # ---------------------------------------------------------
     shared_refresh = load_shared_refresh_token()
-    if shared_refresh and data.get("token") and not is_expired(data["token"]):
-        data["refresh_token"] = shared_refresh
-        set_public_token_raw(data)
-        print("[REFRESH] ✅ Using shared refresh token from database.json")
-        return data
 
-    if data.get("token") and data.get("refresh_token") and not is_expired(data["token"]):
-        print("[REFRESH] ✅ Tokens loaded from storage")
-        return data
+    if shared_refresh:
+        print("[REFRESH] ✅ Found refresh token in shared database.json")
 
+        stored_token = str(data.get("token", "")).strip()
+
+        tokens = {
+            "token": stored_token,
+            "refresh_token": shared_refresh
+        }
+
+        set_public_token_raw(tokens)
+
+        return tokens
+
+    # ---------------------------------------------------------
+    # 3. Fall back to Railway TOKEN_1 / REFRESH_TOKEN_1
+    # ---------------------------------------------------------
     acc = get_active_account(accounts)
-    if not acc:
-        raise ValueError(
-            "❌ No valid accounts found.\n"
-            "Set TOKEN_1/REFRESH_TOKEN_1 (and TOKEN_2/REFRESH_TOKEN_2, etc.) in Railway Variables."
-        )
 
-    print(f"[REFRESH] ⚡ Loading from env — using {acc['label']}")
-    set_public_token_raw({"token": acc["token"], "refresh_token": acc["refresh_token"]})
-    return {"token": acc["token"], "refresh_token": acc["refresh_token"]}
+    if acc:
+        print(f"[REFRESH] ⚡ Loading from Railway variables — using {acc['label']}")
 
+        tokens = {
+            "token": acc["token"],
+            "refresh_token": acc["refresh_token"]
+        }
 
+        set_public_token_raw(tokens)
+
+        return tokens
+
+    # ---------------------------------------------------------
+    # Nothing available
+    # ---------------------------------------------------------
+    raise ValueError(
+        "❌ No refresh token found.\n"
+        "Put a valid refresh token in data/tokens.json, "
+        "database.json, or Railway REFRESH_TOKEN_1."
+    )
 # ── Refresh call ──────────────────────────────────────────────────────────────
 def do_refresh(tokens: dict) -> dict:
     if not SERVER_KEY:
@@ -232,9 +283,7 @@ def main():
     print(f"   Accounts: {len(accounts)} loaded ({', '.join(a['label'] for a in accounts)})")
     print("=" * 55)
 
-    if not accounts:
-        print("[REFRESH] ❌ No accounts configured — set TOKEN_1/REFRESH_TOKEN_1 in Railway Variables")
-        return
+
 
     tokens = load_tokens(accounts)
     # Track which account is active for fallback purposes
