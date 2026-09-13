@@ -241,18 +241,26 @@ def do_refresh(tokens: dict) -> dict:
 
 def switch_to_next_account(accounts: list[dict], current: dict) -> dict | None:
     """
-    Try each account in order after the current one fails.
-    Returns the first valid account, or None if all are dead.
+    Try every configured Railway account after the current one fails.
+
+    Do NOT locally check refresh-token expiration here.
+    Nakama itself determines whether the refresh token is valid.
     """
+
     current_label = current.get("label", "")
-    # Try accounts after the current one first, then wrap around
-    ordered = sorted(accounts, key=lambda a: a["label"] != current_label)
-    for acc in ordered:
+
+    for acc in accounts:
         if acc["label"] == current_label:
             continue
-        if not is_expired(acc["refresh_token"], buffer=60):
-            print(f"[REFRESH] 🔀 Switching to {acc['label']}")
-            return {"token": acc["token"], "refresh_token": acc["refresh_token"], "label": acc["label"]}
+
+        print(f"[REFRESH] 🔀 Trying {acc['label']}...")
+
+        return {
+            "token": acc["token"],
+            "refresh_token": acc["refresh_token"],
+            "label": acc["label"]
+        }
+
     return None
 
 
