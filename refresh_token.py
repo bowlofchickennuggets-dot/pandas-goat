@@ -418,25 +418,20 @@ def do_refresh(tokens):
     """
     Refresh one token directly through Nakama.
 
-    If Nakama returns 401/403, the exception is allowed to propagate so
-    refresh_with_fallback() can try another account.
+    Logs which candidate/account is being attempted without exposing
+    the actual refresh token.
     """
 
     if not SERVER_KEY:
-
         raise RuntimeError(
             "NAKAMA_SERVER_KEY is not configured."
         )
 
     refresh_token = str(
-        tokens.get(
-            "refresh_token",
-            ""
-        )
+        tokens.get("refresh_token", "")
     ).strip()
 
     if not refresh_token:
-
         raise ValueError(
             "No refresh token is available."
         )
@@ -446,76 +441,165 @@ def do_refresh(tokens):
         "unknown"
     )
 
-    print(
-        f"\n[REFRESH] 🔄 Refreshing {label}..."
+    # Safe identifier for troubleshooting.
+    # This NEVER prints the actual token.
+    token_id = (
+        f"{refresh_token[:6]}..."
+        f"{refresh_token[-6:]}"
+        if len(refresh_token) >= 12
+        else "[short-token]"
     )
 
-    # ------------------------------------------------------------------------
+    print(
+        "\n" + "=" * 60
+    )
+
+    print(
+        f"[REFRESH] 🎯 Candidate: {label}"
+    )
+
+    print(
+        f"[REFRESH] 🔑 Refresh token: {token_id}"
+    )
+
+    print(
+        f"[REFRESH] 🌐 Nakama: {REFRESH_URL}"
+    )
+
+    print(
+        "[REFRESH] 📤 Sending refresh request..."
+    )
+
+    print(
+        "=" * 60
+    )
+
+    # ----------------------------------------------------------------
     # Basic authentication
-    # ------------------------------------------------------------------------
+    # ----------------------------------------------------------------
 
     basic = base64.b64encode(
         f"{SERVER_KEY}:".encode()
     ).decode()
 
-    # ------------------------------------------------------------------------
-    # Request body
-    # ------------------------------------------------------------------------
-
-    body = json.dumps(
-        {
-            "token": refresh_token
-        }
-    ).encode()
-
-    # ------------------------------------------------------------------------
-    # HTTP request
-    # ------------------------------------------------------------------------
+    body = json.dumps({
+        "token": refresh_token
+    }).encode()
 
     req = request.Request(
         REFRESH_URL,
-
         data=body,
-
         method="POST",
-
         headers={
-            "Content-Type":
-            "application/json",
-
-            "Authorization":
-            f"Basic {basic}",
+            "Content-Type": "application/json",
+            "Authorization": f"Basic {basic}",
         },
     )
 
-    # ------------------------------------------------------------------------
-    # SSL
-    # ------------------------------------------------------------------------
-
     ssl_context = ssl.create_default_context()
 
-    # ------------------------------------------------------------------------
-    # Send request
-    # ------------------------------------------------------------------------
+    try:
 
-    with request.urlopen(
-        req,
+        with request.urlopen(
+            req,
+            timeout=15,
+            context=ssl_context
+        ) as response:
 
-        timeout=15,
+            response_body = response.read()
 
-        context=ssl_context
+            status = response.status
 
-    ) as response:
+        print(
+            f"[REFRESH] 📥 Nakama response: HTTP {status}"
+        )
 
-        response_body = response.read()
+    except error.HTTPError as exc:
 
-    # ------------------------------------------------------------------------
+        try:
+            response_body = exc.read().decode(
+                "utf-8",
+                errors="replace"
+            )
+        except Exception:
+            response_body = ""
+
+        print(
+            "\n" + "!" * 60
+        )
+
+        print(
+            f"[REFRESH] ❌ REJECTED"
+        )
+
+        print(
+            f"[REFRESH] 🎯 Candidate: {label}"
+        )
+
+        print(
+            f"[REFRESH] 🔑 Token: {token_id}"
+        )
+
+        print(
+            f"[REFRESH] 🚫 HTTP {exc.code}"
+        )
+
+        print(
+            f"[REFRESH] 📥 Nakama: {response_body}"
+        )
+
+        print(
+            "!" * 60
+        )
+
+        # Let refresh_with_fallback() try the next candidate.
+        raise
+
+    except Exception as exc:
+
+        print(
+            "\n" + "!" * 60
+        )
+
+        print(
+            f"[REFRESH] ❌ NETWORK/REQUEST ERROR"
+        )
+
+        print(
+            f"[REFRESH] 🎯 Candidate: {label}"
+        )
+
+        print(
+            f"[REFRESH] 🔑 Token: {token_id}"
+        )
+
+        print(
+            f"[REFRESH] Error: {exc}"
+        )
+
+        print(
+            "!" * 60
+        )
+
+        raise
+
+    # ----------------------------------------------------------------
     # Parse response
-    # ------------------------------------------------------------------------
+    # ----------------------------------------------------------------
 
-    data = json.loads(
-        response_body
-    )
+    try:
+
+        data = json.loads(
+            response_body
+        )
+
+    except Exception as exc:
+
+        print(
+            f"[REFRESH] ❌ Invalid JSON from Nakama: {exc}"
+        )
+
+        raise
 
     new_access_token = str(
         data.get(
@@ -531,56 +615,90 @@ def do_refresh(tokens):
         )
     ).strip()
 
-    # ------------------------------------------------------------------------
-    # Validate access token
-    # ------------------------------------------------------------------------
-
     if not new_access_token:
+
+        print(
+            f"[REFRESH] ❌ {label} was accepted, "
+            "but Nakama returned no access token."
+        )
 
         raise RuntimeError(
             "Nakama returned no access/session token."
         )
 
-    # ------------------------------------------------------------------------
-    # Some Nakama configurations may not rotate the refresh token.
-    # In that case, keep the existing one.
-    # ------------------------------------------------------------------------
-
+    # Nakama may rotate the refresh token.
     if not new_refresh_token:
-
         new_refresh_token = refresh_token
 
-    # ------------------------------------------------------------------------
-    # Update memory
-    # ------------------------------------------------------------------------
+        print(
+            "[REFRESH] ⚠️ Nakama did not return a "
+            "new refresh token; keeping current one."
+        )
+    else:
+
+        new_token_id = (
+            f"{new_refresh_token[:6]}..."
+            f"{new_refresh_token[-6:]}"
+            if len(new_refresh_token) >= 12
+            else "[short-token]"
+        )
+
+        if new_refresh_token != refresh_token:
+
+            print(
+                "[REFRESH] 🔄 Nakama ROTATED the refresh token."
+            )
+
+            print(
+                f"[REFRESH] 🔑 New refresh token: {new_token_id}"
+            )
+
+        else:
+
+            print(
+                "[REFRESH] 🔒 Refresh token was unchanged."
+            )
+
+    # ----------------------------------------------------------------
+    # Update current pair
+    # ----------------------------------------------------------------
 
     tokens["token"] = new_access_token
 
-    tokens["refresh_token"] = (
-        new_refresh_token
-    )
+    tokens["refresh_token"] = new_refresh_token
 
-    # ------------------------------------------------------------------------
-    # Save newest token pair
-    # ------------------------------------------------------------------------
+    # ----------------------------------------------------------------
+    # Save newest pair
+    # ----------------------------------------------------------------
 
-    set_public_token_raw(
-        {
-            "token":
-            tokens["token"],
-
-            "refresh_token":
-            tokens["refresh_token"],
-        }
-    )
+    set_public_token_raw({
+        "token": tokens["token"],
+        "refresh_token": tokens["refresh_token"],
+    })
 
     save_shared_refresh_token(
         tokens["refresh_token"]
     )
 
-    # ------------------------------------------------------------------------
-    # Show access-token expiration
-    # ------------------------------------------------------------------------
+    print(
+        "\n" + "=" * 60
+    )
+
+    print(
+        f"[REFRESH] ✅ ACCEPTED: {label}"
+    )
+
+    print(
+        f"[REFRESH] 💾 Saved newest token pair."
+    )
+
+    print(
+        "=" * 60
+    )
+
+    # ----------------------------------------------------------------
+    # Access-token expiration
+    # ----------------------------------------------------------------
 
     try:
 
@@ -596,33 +714,23 @@ def do_refresh(tokens):
 
             exp_time = time.strftime(
                 "%Y-%m-%d %H:%M:%S",
-
-                time.localtime(
-                    exp
-                )
+                time.localtime(exp)
             )
 
             print(
-                "[REFRESH] ✅ Token refreshed! "
-                f"Expires: {exp_time} "
-                f"(in {ttl}s)"
+                f"[REFRESH] ⏰ Access token expires: "
+                f"{exp_time}"
             )
 
-        else:
-
             print(
-                "[REFRESH] ✅ Token refreshed successfully."
+                f"[REFRESH] ⏳ Access token TTL: {ttl}s"
             )
 
     except Exception:
 
-        print(
-            "[REFRESH] ✅ Token refreshed successfully."
-        )
+        pass
 
     return tokens
-
-
 # ============================================================================
 # BUILD FALLBACK CANDIDATES
 # ============================================================================
@@ -707,132 +815,95 @@ def build_candidates(
 # REFRESH WITH ACCOUNT FALLBACK
 # ============================================================================
 
-def refresh_with_fallback(
-    current,
-    accounts
-):
-    """
-    Try the current token and then every configured Railway account.
+def refresh_with_fallback(tokens, accounts):
+    candidates = []
 
-    Nakama is the authority on refresh-token validity.
-    """
+    # Current token first
+    if tokens and tokens.get("refresh_token"):
+        candidates.append({
+            "label": tokens.get("label", "current_storage"),
+            "refresh_token": tokens["refresh_token"]
+        })
 
-    candidates = build_candidates(
-        current,
-        accounts
-    )
+    # Then all configured accounts
+    for account in accounts:
+        refresh_token = account.get("refresh_token")
 
-    if not candidates:
+        if refresh_token:
+            candidates.append({
+                "label": account.get("label", "unknown_account"),
+                "refresh_token": refresh_token
+            })
 
-        raise RuntimeError(
-            "No refresh-token candidates available."
-        )
+    # Remove duplicate refresh tokens
+    seen = set()
+    unique_candidates = []
+
+    for candidate in candidates:
+        token = candidate["refresh_token"]
+
+        if token not in seen:
+            seen.add(token)
+            unique_candidates.append(candidate)
 
     print(
-        f"[REFRESH] 🔎 {len(candidates)} "
-        "refresh candidate(s) available."
+        f"[REFRESH] 🔎 Testing {len(unique_candidates)} refresh-token candidate(s)..."
     )
 
-    last_error = None
+    for candidate in unique_candidates:
+        label = candidate["label"]
+        refresh_token = candidate["refresh_token"]
 
-    # ------------------------------------------------------------------------
-    # Try each candidate
-    # ------------------------------------------------------------------------
+        # Safe fingerprint — NEVER prints the full token
+        if len(refresh_token) >= 12:
+            fingerprint = (
+                f"{refresh_token[:6]}..."
+                f"{refresh_token[-6:]}"
+            )
+        else:
+            fingerprint = "(token too short to fingerprint)"
 
-    for index, candidate in enumerate(
-        candidates,
-        start=1
-    ):
-
-        label = candidate[
-            "label"
-        ]
-
-        print(
-            f"[REFRESH] 🔑 Trying {label} "
-            f"({index}/{len(candidates)})..."
-        )
+        print("")
+        print("[REFRESH] ----------------------------------------")
+        print(f"[REFRESH] 👤 Account: {label}")
+        print(f"[REFRESH] 🔑 Token candidate: {fingerprint}")
+        print("[REFRESH] 🔄 Sending refresh request to Nakama...")
 
         try:
+            result = do_refresh({
+                "refresh_token": refresh_token,
+                "label": label
+            })
 
-            refreshed = do_refresh(
-                candidate
-            )
-
-            print(
-                f"[REFRESH] ✅ {label} worked."
-            )
-
-            return refreshed
-
-        # --------------------------------------------------------------------
-        # HTTP errors
-        # --------------------------------------------------------------------
-
-        except error.HTTPError as exc:
-
-            last_error = exc
-
-            try:
-
-                body = exc.read().decode(
-                    "utf-8",
-                    errors="replace"
-                )
-
-            except Exception:
-
-                body = ""
-
-            print(
-                f"[REFRESH] ❌ {label}: "
-                f"HTTP {exc.code} | {body}"
-            )
-
-            # 401 / 403 = this token isn't accepted.
-            # Continue to the next account.
-            if exc.code in (
-                401,
-                403
-            ):
-
+            if result:
                 print(
-                    f"[REFRESH] 🔑 {label} "
-                    "was rejected by Nakama."
+                    f"[REFRESH] ✅ Nakama ACCEPTED account: {label}"
+                )
+                print(
+                    f"[REFRESH] ✅ Successful token candidate: {fingerprint}"
                 )
 
-                continue
-
-            # Other HTTP errors may also be temporary.
-            continue
-
-        # --------------------------------------------------------------------
-        # Other errors
-        # --------------------------------------------------------------------
+                result["label"] = label
+                return result
 
         except Exception as exc:
-
-            last_error = exc
+            error_text = str(exc)
 
             print(
-                f"[REFRESH] ❌ {label}: "
-                f"{exc}"
+                f"[REFRESH] ❌ Nakama REJECTED account: {label}"
+            )
+            print(
+                f"[REFRESH] ❌ Rejected token candidate: {fingerprint}"
+            )
+            print(
+                f"[REFRESH] ❌ Reason: {error_text}"
             )
 
             continue
 
-    # ------------------------------------------------------------------------
-    # Everything failed
-    # ------------------------------------------------------------------------
-
-    if last_error:
-
-        raise last_error
-
-    raise RuntimeError(
-        "All refresh candidates failed."
-    )
-
+    print("")
+    print("[REFRESH] ❌ Nakama rejected ALL refresh-token candidates.")
+    return None
 
 # ============================================================================
 # MAIN
