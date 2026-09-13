@@ -32,8 +32,6 @@ process.on('uncaughtException', (err) =>
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 
-const NAKAMA_HOST = 'https://animalcompany.us-east1.nakamacloud.io';
-
 const SERVER_IDS = [
     '1540776513119719591'
 ];
@@ -44,15 +42,9 @@ const SUPPORTER_ROLE_IDS = [
     '1545535562763468990'
 ];
 
-// Railway variable first.
-// If Railway somehow fails to provide it, the hard-coded fallback is used.
-const SERVER_KEY =
-    process.env.SERVER_KEY || '6URuTSlDKKfYbuDW';
-
-
-
 // Initial/bootstrap refresh token.
-// The current rotated token will be stored in database.json.
+// Discord itself NO LONGER refreshes this token.
+// refresh_token.py handles all Nakama refreshing.
 let MASTER_REFRESH_TOKEN =
     process.env.MASTER_REFRESH_TOKEN || '';
 
@@ -121,15 +113,25 @@ const roleCooldowns = {
 
 // ==================== TOKEN DATABASE ====================
 
-// --- DATABASE TOKEN ROTATION LOADER ---
 function getStoredTokens() {
     const tokenList = [];
 
-    // Prefer the newest token saved by the Nakama refresher.
-    if (fs.existsSync('./database.json')) {
+    // Prefer the newest refresh token saved by refresh_token.py.
+    const dbPath = path.join(
+        BASE_DIR,
+        'database.json'
+    );
+
+    if (fs.existsSync(dbPath)) {
         try {
-            const dbRaw = fs.readFileSync('./database.json', 'utf8');
-            const dbData = JSON.parse(dbRaw);
+            const dbRaw =
+                fs.readFileSync(
+                    dbPath,
+                    'utf8'
+                );
+
+            const dbData =
+                JSON.parse(dbRaw);
 
             if (Array.isArray(dbData.tokens)) {
                 for (const item of dbData.tokens) {
@@ -144,13 +146,16 @@ function getStoredTokens() {
                             typeof parsed.refresh_token === 'string' &&
                             parsed.refresh_token.trim().length > 0
                         ) {
-                            tokenList.push(parsed.refresh_token.trim());
+                            tokenList.push(
+                                parsed.refresh_token.trim()
+                            );
                         }
                     } catch {
                         // Ignore malformed database entries
                     }
                 }
             }
+
         } catch (error) {
             console.error(
                 '⚠️ Could not parse database.json tokens:',
@@ -159,17 +164,22 @@ function getStoredTokens() {
         }
     }
 
-    // Railway MASTER_REFRESH_TOKEN is only a fallback.
+    // Railway variable is only a bootstrap fallback.
     if (
         MASTER_REFRESH_TOKEN &&
         MASTER_REFRESH_TOKEN.trim().length > 0
     ) {
-        tokenList.push(MASTER_REFRESH_TOKEN.trim());
+        tokenList.push(
+            MASTER_REFRESH_TOKEN.trim()
+        );
     }
 
-    // Remove duplicates while preserving order.
-    return [...new Set(tokenList)];
+    // Remove duplicates.
+    return [
+        ...new Set(tokenList)
+    ];
 }
+
 
 // ==================== DISCORD CLIENT ====================
 
@@ -203,6 +213,7 @@ async function sendLog(embed) {
                 embeds: [embed]
             });
         }
+
     } catch (e) {
         console.error(
             '❌ Failed to send log:',
@@ -212,131 +223,146 @@ async function sendLog(embed) {
 }
 
 
-// --- NAKAMA TOKEN REFRESH ---
+// ==================== TOKEN READER ====================
+// IMPORTANT:
+// Discord does NOT refresh Nakama tokens anymore.
+// refresh_token.py is responsible for refreshing them.
+// This function only reads the latest pair from storage.
+
 async function fetchLiveTokenPair() {
-    console.log('⚡ Requesting fresh token directly from Nakama...');
 
-    const tokenCandidates = getStoredTokens();
+    console.log(
+        '📦 Reading latest token pair from refresh_token.py storage...'
+    );
 
-    if (tokenCandidates.length === 0) {
-        console.error('❌ No refresh tokens found in environment or database.json.');
-        return null;
-    }
+    try {
 
-    if (!SERVER_KEY) {
-        console.error('❌ Nakama SERVER_KEY is missing.');
-        return null;
-    }
-
-    const refreshUrl = `${NAKAMA_HOST}/v2/account/session/refresh`;
-
-    // Nakama uses HTTP Basic authentication:
-    // username = server key
-    // password = empty
-    const basicAuth = Buffer
-        .from(`${SERVER_KEY}:`)
-        .toString('base64');
-
-    for (const refreshToken of tokenCandidates) {
-        try {
-            const response = await fetch(refreshUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Basic ${basicAuth}`
-                },
-                body: JSON.stringify({
-                    token: refreshToken
-                })
-            });
-
-            const responseText = await response.text();
-
-            if (!response.ok) {
-                console.error(
-                    `❌ Nakama refresh failed: ${response.status} | ${responseText}`
-                );
-                continue;
-            }
-
-            let data;
-
-            try {
-                data = JSON.parse(responseText);
-            } catch {
-                console.error('❌ Nakama returned invalid JSON.');
-                continue;
-            }
-
-            const freshBearer =
-                data.token ||
-                data.access_token;
-
-            const freshRefreshToken =
-                data.refresh_token ||
-                data.refreshToken ||
-                refreshToken;
-
-            if (!freshBearer) {
-                console.error('❌ Nakama response did not contain a new access token.');
-                continue;
-            }
-
-            console.log('✅ Nakama token refresh successful.');
-
-            // Update the in-memory master refresh token
-            MASTER_REFRESH_TOKEN = freshRefreshToken;
-
-            // Save the rotated refresh token to database.json
-            try {
-                let dbData = {};
-
-                if (fs.existsSync('./database.json')) {
-                    try {
-                        dbData = JSON.parse(
-                            fs.readFileSync('./database.json', 'utf8')
-                        );
-                    } catch {
-                        dbData = {};
-                    }
-                }
-
-                if (!Array.isArray(dbData.tokens)) {
-                    dbData.tokens = [];
-                }
-
-                dbData.tokens[0] = {
-                    refresh_token: freshRefreshToken
-                };
-
-                fs.writeFileSync(
-                    './database.json',
-                    JSON.stringify(dbData, null, 2)
-                );
-
-                console.log('💾 Saved newest Nakama refresh token.');
-            } catch (saveError) {
-                console.error(
-                    '⚠️ Could not save refreshed token:',
-                    saveError.message
-                );
-            }
-
-            return {
-                bearer: freshBearer,
-                refresh_token: freshRefreshToken
-            };
-
-        } catch (error) {
-            console.error(
-                '❌ Network error refreshing Nakama token:',
-                error.message
+        // refresh_token.py stores the newest
+        // access + refresh token here.
+        const tokenPath =
+            path.join(
+                BASE_DIR,
+                'data',
+                'tokens.json'
             );
-        }
-    }
 
-    console.error('❌ All Nakama refresh attempts failed.');
-    return null;
+
+        if (fs.existsSync(tokenPath)) {
+
+            const tokenData =
+                JSON.parse(
+                    fs.readFileSync(
+                        tokenPath,
+                        'utf8'
+                    )
+                );
+
+
+            const bearer =
+                typeof tokenData.token === 'string'
+                    ? tokenData.token.trim()
+                    : '';
+
+
+            const refreshToken =
+                typeof tokenData.refresh_token === 'string'
+                    ? tokenData.refresh_token.trim()
+                    : '';
+
+
+            if (bearer) {
+
+                console.log(
+                    '✅ Loaded latest access token from data/tokens.json.'
+                );
+
+
+                if (refreshToken) {
+                    MASTER_REFRESH_TOKEN =
+                        refreshToken;
+                }
+
+
+                return {
+                    bearer,
+                    refresh_token: refreshToken
+                };
+            }
+        }
+
+
+        // Fallback:
+        // database.json normally contains the newest
+        // rotated refresh token, but not necessarily
+        // the current access token.
+
+        const dbPath =
+            path.join(
+                BASE_DIR,
+                'database.json'
+            );
+
+
+        if (fs.existsSync(dbPath)) {
+
+            const dbData =
+                JSON.parse(
+                    fs.readFileSync(
+                        dbPath,
+                        'utf8'
+                    )
+                );
+
+
+            if (
+                Array.isArray(dbData.tokens) &&
+                dbData.tokens[0]
+            ) {
+
+                const stored =
+                    dbData.tokens[0];
+
+
+                const refreshToken =
+                    typeof stored.refresh_token === 'string'
+                        ? stored.refresh_token.trim()
+                        : '';
+
+
+                if (refreshToken) {
+
+                    MASTER_REFRESH_TOKEN =
+                        refreshToken;
+
+
+                    console.error(
+                        '⚠️ database.json has a refresh token, but no current access token.'
+                    );
+
+                    console.error(
+                        '⚠️ Wait for refresh_token.py to write data/tokens.json.'
+                    );
+                }
+            }
+        }
+
+
+        console.error(
+            '❌ No current access token found in data/tokens.json.'
+        );
+
+        return null;
+
+
+    } catch (error) {
+
+        console.error(
+            '❌ Failed to read token storage:',
+            error.message
+        );
+
+        return null;
+    }
 }
 
 
@@ -370,11 +396,13 @@ if (TOKEN) {
                 body: commands
             }
         )
+
         .then(() =>
             console.log(
                 `✅ Slash commands registered in ${serverId}`
             )
         )
+
         .catch(console.error);
     }
 }
@@ -386,12 +414,14 @@ client.on(
     Events.InteractionCreate,
     async interaction => {
 
+
         // ==================== /generator ====================
 
         if (
             interaction.isChatInputCommand() &&
             interaction.commandName === 'generator'
         ) {
+
 
             if (
                 !interaction.member.roles.cache.some(
@@ -430,9 +460,11 @@ client.on(
                             .setCustomId(
                                 'claim_token'
                             )
+
                             .setLabel(
                                 'Generate Live Token'
                             )
+
                             .setStyle(
                                 ButtonStyle.Success
                             )
@@ -445,6 +477,7 @@ client.on(
                 components: [row]
             });
 
+
             return;
         }
 
@@ -456,8 +489,10 @@ client.on(
             interaction.customId === 'claim_token'
         ) {
 
+
             const userId =
                 interaction.user.id;
+
 
             const now =
                 Date.now();
@@ -510,6 +545,7 @@ client.on(
                     (now - lastUsed) /
                     1000;
 
+
                 const remaining =
                     cooldownSeconds -
                     elapsed;
@@ -521,6 +557,7 @@ client.on(
                         Math.floor(
                             remaining / 60
                         );
+
 
                     const seconds =
                         Math.ceil(
@@ -543,6 +580,8 @@ client.on(
             });
 
 
+            // This ONLY reads the token maintained
+            // by refresh_token.py.
             const tokenPair =
                 await fetchLiveTokenPair();
 
@@ -551,7 +590,7 @@ client.on(
 
                 return interaction.editReply({
                     content:
-                        '❌ Generation failed. Current tokens have expired and will be restocked soon.'
+                        '❌ Generation failed. The token refresher has not produced a current token yet. Please try again shortly.'
                 });
             }
 
@@ -568,6 +607,7 @@ client.on(
                         refresh_token:
                             tokenPair.refresh_token
                     },
+
                     null,
                     2
                 );
@@ -603,6 +643,7 @@ client.on(
                         .setTitle(
                             '📜 Token Generated'
                         )
+
                         .addFields({
                             name: 'User',
 
@@ -611,7 +652,9 @@ client.on(
 
                             inline: true
                         })
+
                         .setTimestamp()
+
                         .setColor('#57F287');
 
 
@@ -636,9 +679,11 @@ client.on(
 
 const app = express();
 
+
 app.use(
     express.json()
 );
+
 
 app.use(
     express.urlencoded({
