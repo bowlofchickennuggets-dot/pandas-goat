@@ -53,7 +53,7 @@ REFRESH_URL = f"{HOST.rstrip('/')}/v2/account/session/refresh"
 REFRESH_INTERVAL = int(
     os.getenv(
         "REFRESH_INTERVAL_SECONDS",
-        "120"
+        "300"
     )
 )
 
@@ -294,7 +294,7 @@ def load_tokens(accounts):
     refresh_with_fallback() will try every Railway account.
     """
 
-    data = get_public_token_raw()
+    data = get_public_token_raw() or {}
 
     stored_refresh = str(
         data.get(
@@ -1026,135 +1026,51 @@ def main():
     # ------------------------------------------------------------------------
 
     print(
-        f"[REFRESH] 🔁 Loop active — "
-        f"checking every {REFRESH_INTERVAL}s\n"
+        f"[REFRESH] 🔁 Loop active — refreshing every {REFRESH_INTERVAL}s\n"
     )
 
+    # Keep the last known-good token pair in memory.
+    # A failed refresh must NEVER replace it with None.
+    current_tokens = tokens
+
     while True:
-
         try:
-
-            access_token = str(
-                tokens.get(
-                    "token",
-                    ""
-                )
-            ).strip()
-
-            # ----------------------------------------------------------------
-            # No access token
-            # ----------------------------------------------------------------
-
-            if not access_token:
-
-                print(
-                    "[REFRESH] ⚠️ No access token — "
-                    "refreshing now..."
-                )
-
-                tokens = refresh_with_fallback(
-                    tokens,
-                    accounts
-                )
-
-                continue
-
-            # ----------------------------------------------------------------
-            # Determine access-token TTL
-            # ----------------------------------------------------------------
-
-            try:
-
-                ttl = seconds_until_expiry(
-                    access_token
-                )
-
-            except Exception:
-
-                ttl = 0
-
-            # ----------------------------------------------------------------
-            # Refresh 5 minutes before expiration
-            # ----------------------------------------------------------------
-
-            if ttl <= 300:
-
-                print(
-                    f"[REFRESH] ⚠️ Token expires "
-                    f"in {ttl}s — refreshing now..."
-                )
-
-                try:
-
-                    tokens = refresh_with_fallback(
-                        tokens,
-                        accounts
-                    )
-
-                except Exception as exc:
-
-                    print(
-                        "[REFRESH] ❌ All current "
-                        f"refresh attempts failed: {exc}"
-                    )
-
-                    print(
-                        "[REFRESH] ⏳ Retrying "
-                        "in 30 seconds..."
-                    )
-
-                    # IMPORTANT:
-                    # Don't permanently stop the process.
-                    time.sleep(30)
-
-            # ----------------------------------------------------------------
-            # Access token is still valid
-            # ----------------------------------------------------------------
-
-            else:
-
-                sleep_for = min(
-                    REFRESH_INTERVAL,
-                    max(
-                        15,
-                        ttl - 300
-                    )
-                )
-
-                print(
-                    f"[REFRESH] ⏱️ Token valid "
-                    f"for {ttl}s — checking again "
-                    f"in {sleep_for}s..."
-                )
-
-                time.sleep(
-                    sleep_for
-                )
-
-        # --------------------------------------------------------------------
-        # Ctrl+C
-        # --------------------------------------------------------------------
-
-        except KeyboardInterrupt:
-
             print(
-                "\n[REFRESH] ⛔ Stopped by user"
+                f"\n[REFRESH] ⏰ Refresh cycle started. "
+                f"Next cycle in {REFRESH_INTERVAL}s."
             )
 
+            result = refresh_with_fallback(
+                current_tokens,
+                accounts
+            )
+
+            if result is not None:
+                current_tokens = result
+                print(
+                    "[REFRESH] ✅ Current token pair updated successfully."
+                )
+            else:
+                print(
+                    "[REFRESH] ⚠️ No candidate was accepted. "
+                    "Keeping the last known-good token and retrying."
+                )
+
+            time.sleep(max(30, REFRESH_INTERVAL))
+
+        except KeyboardInterrupt:
+            print("\n[REFRESH] ⛔ Stopped by user")
             break
 
-        # --------------------------------------------------------------------
-        # Unexpected error
-        # --------------------------------------------------------------------
-
         except Exception as exc:
-
             print(
                 f"[REFRESH] ❌ Unexpected loop error: {exc}"
             )
-
             traceback.print_exc()
-
+            print(
+                "[REFRESH] ⏳ Keeping the last known-good token. "
+                "Retrying in 30 seconds..."
+            )
             time.sleep(30)
 
 
